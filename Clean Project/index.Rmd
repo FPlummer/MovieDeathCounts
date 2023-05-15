@@ -1,0 +1,685 @@
+---
+title: "Film Death Counts"
+author: "This project was produced using RStudio v2023.03.0+386"
+date: "Originally produced: 2023-05-04, latest update: `r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+geometry: margin=2cm
+---
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.show="hold", warning=FALSE, results=FALSE, message=FALSE)
+
+library(here)
+library(knitr)
+library(tidyverse)
+library(ggthemes)
+library(gridExtra)
+
+```
+&nbsp;
+
+## Visualising the effects of on-screen deaths on movie data from a selection of films from 1949-2013
+&nbsp;
+
+### **Research Questions**
+***
+
+#####  *What Are The Top 15 Films With the Highest Number Of On-Screen Deaths?*
+
+#####  *Which genres depict the most on-screen deaths, on average?*
+
+#####  *How are age ratings distributed between genres that depict on-screen deaths?*
+
+#####  *Is there an association between number of on screen deaths and IMDB ratings within genres?*
+&nbsp;
+
+### **Data Origins**
+***
+
+Dataset used in this project:
+&nbsp;
+
+Olson, Randy (2013): On-screen movie kill counts for hundreds of films. *figshare. Dataset.* https://doi.org/10.6084/m9.figshare.889719.v1
+
+&nbsp;
+
+The data contains on-screen death counts for 545 films within the date range of 1949-2013. Film title, release year, MPAA rating, genre(s), run time and director were also recorded.
+
+```{r rawdata, results=TRUE}
+filepath <- file.path("data", "filmdeathcounts.csv")
+rawdata <- read.csv(filepath)
+knitr::kable(head(rawdata), format = "markdown")
+```
+
+
+
+Body count data was collected from [www.MovieBodyCounts.com](www.MovieBodyCounts.com) and tallied according to the website's guidelines.
+
+All other data was scraped from each film's individual IMDB page and collated into this dataset by Randy Olson.
+
+
+### **MovieBodyCounts Guidelines**
+***
+
+The death count criteria were retrieved from the following forum page [here](http://moviebodycounts.proboards.com/index.cgi?board=general&action=display&thread=6).
+
+*Please be aware that it is __not recommended__ to follow any link provided on the forum as they may direct to unsafe websites.*
+
+For ease, the detailed guidelines have also been restated verbatim below:
+
+>
+###### 1. The "body counts" for this site are mostly "on screen kills/deaths" or fatal/critical/mortal shots/hits of human, humanoid, or creatures (ie monsters, aliens, zombies.) The rule of thumb is "do they bleed" which will leave the concept of cyborgs somewhat open and decided per film. The human and creature counts should be separate. These will be added together for a final tally.
+>
++ ###### Note on non-hominoid/animals - In films such as animations where animal/robots have the ability to speak their kills will sometimes be considered in the counts since they are "characters" to the story. This will be decided on a film by film basis.
+>
+###### 2. Unspecified/displayed bodies (one's that do not actually have an "on screen" hit)
+>
++ ###### **Do not count** - unspecified piles or strewn "bodies" (ie-war films) unless they are clear and countable (head shots). These will be noted though in the misc. section.
+>
++ ###### **Do count** - any unspecified but clearly shown "displayed" bodies (IE crucifixions, hangings...)
+>
+###### 3. Ships, buildings, vehicles ect can be counted but unless an "on screen kill/hit/death" is shown to a "body" it will not be added in the final "body count tally". A miscellaneous count will be added to the page for these. It is entirely optional to count any such.
+>
+###### 4. Counts of kills by main characters will be added to the pages.
+>
+###### 5. Animals: Depending on their type of death and their significance to the plot or main characters they will not be counted except under "Miscellaneous."
+>
+###### 6. Implied Kills...
+>
++ ###### **Do not count** - if they are only talked about. Where nothing at all is shown in the film. Also photos of dead bodies do not count.
+>
++ ###### **Do count** - where everything is shown up until the final blow, fall, shot... These are called "cut aways." An example is the opening scene in Jurassic Park. If you look really closely at that sequence it actually shows nothing in the way of a "death" but it is clearly though "implied" that it is through editing.
+>
+###### 7. Specify which cut of a film you are doing (theatrical, directors...), but please use an officially released extended/unrated/director's cut when available.
+>
+###### 8. Specific guidelines pertaining to zombie deaths and other exceptional on-screen deaths can be resolved on a case-by-case basis under advisement from the site owner.
+
+As implied by the guidelines above film body counts were counted by volunteers following this criteria and made available via this website.
+
+
+### **Data Preparation**
+***
+
+##### Preparing this data for analyses consisted of two steps:
+
+### 1. Modernise outdated MPA ratings.
+***
+
+This involved mutating any age ratings no longer used by the MPA into a modern equivalent.
+
+```{r MPA tidy}
+ df_v1 <- rawdata %>% 
+  mutate (MPAA_Rating = case_when(
+    MPAA_Rating == "Approved" ~ "PG",
+    MPAA_Rating == "GP" ~ "PG",
+    MPAA_Rating == "M" ~ "PG",
+    MPAA_Rating == "NR" ~ "Unrated",
+    TRUE ~ MPAA_Rating
+    )
+  )
+```
+
+&nbsp;
+
+This mutation was only performed on films that did not have a modern rating attached, therefore, films where rating may have changed over time from one modern rating to another were not unaffected. This may have introduced inconsistencies with the genres in this data set.
+
+&nbsp;
+
+```{r, ORDINAL RATINGS, echo=FALSE}
+#---ORDINAL RATINGS---
+
+    df_v2 <- df_v1 %>% 
+        mutate (rating_order = case_when(
+            MPAA_Rating == "G" ~ "1",
+            MPAA_Rating == "PG" ~ "2",
+            MPAA_Rating == "PG-13" ~ "3",
+            MPAA_Rating == "R" ~ "4",
+            MPAA_Rating == "X" ~ "5",
+            MPAA_Rating == "Unrated" ~ "0"
+      )
+    )
+
+```
+
+
+### 2. Genre tidying
+
+#### Genre splitting
+***
+Genre data were split into individual categories and the number of unique genres were calculated and printed. 
+
+
+
+```{r genre tidying, results = TRUE}
+genres <- unlist(strsplit(df_v2$Genre, split = "\\|"))
+  num_unique_genres <- length(unique(genres))
+  print(paste("There are",num_unique_genres, "unique genres in this dataset"))
+  
+print(sort(unique(genres)))
+
+```
+
+&nbsp;
+
+#### Dummy Coding by genre
+***
+
+Six genres, chosen from the top 50% of the most frequently appearing genres, were subsequently dummy coded (indicating as to whether a film was or wasn't tagged as a specific genre) to allow for visualations to be made within each genre.
+
+These genres were:
++ Action
++ Fantasy
++ Horror
++ Thriller
++ Sci-Fi
++ War
+
+An example of the code used to dummy code for action movies is quoted below. The full code can be found in the rmarkdown file along with the script itself.
+
+```{R, DUMMY CODING EXAMPLE}
+
+#---------DUMMY CODING BY INTERESTED GENRES---
+#1. Identify key genre title within genres using grepl().
+
+#2. Then generate new column tagging rows as being within that genre.
+
+#3. Finally, create subset of only films in that genre
+
+#-Action-
+df_v2$is_action <- grepl("Action", df_v2$Genre)
+df_v2 <- df_v2 %>%
+  mutate(is_action = as.numeric(is_action))
+action_data <- subset(df_v2, is_action == "1")
+```
+
+```{r, Hidden Dummy Codes, echo = FALSE}
+#Fantasy
+df_v2$is_fantasy <- grepl("Fantasy", df_v2$Genre)
+df_v2 <- df_v2 %>%
+  mutate(is_fantasy = as.numeric(is_fantasy))
+fantasy_data <- subset(df_v2, is_fantasy == "1")
+
+#Horror
+df_v2$is_horror <- grepl("Horror", df_v2$Genre)
+df_v2 <- df_v2 %>%
+  mutate(is_horror = as.numeric(is_horror))
+horror_data <- subset(df_v2, is_horror == "1")
+
+#Thriller
+df_v2$is_thriller <- grepl("Thriller", df_v2$Genre)
+df_v2 <- df_v2 %>%
+  mutate(is_thriller = as.numeric(is_thriller))
+thriller_data <- subset(df_v2, is_thriller == "1")
+
+#Sci-Fi
+df_v2$is_scifi <- grepl("Sci-Fi", df_v2$Genre)
+df_v2 <- df_v2 %>%
+  mutate(is_scifi = as.numeric(is_scifi))
+scifi_data <- subset(df_v2, is_scifi == "1")
+
+#War
+df_v2$is_war <- grepl("War", df_v2$Genre)
+df_v2 <- df_v2 %>%
+  mutate(is_war = as.numeric(is_war))
+war_data <- subset(df_v2, is_war == "1")
+
+#----------------CHECKPOINT-----------
+#Save data
+  df_v3 <- df_v2
+```
+The similar lines of code were used for the Fantasy, Horror, Thriller, Sci-Fi and War genres. However, these have not been shown here.
+
+&nbsp;
+
+## Visualisations
+*****
+
+
+#### Each visualisation aims to address each of the respective research questions posed above.
+
+&nbsp;
+
+These visualisations are believed to follow-on from one another until several genres and their correlated IMDB scores are depicted in the key visualisation.
+
+Some annotations remain in the quoted code to enable for easier human reading. 
+
+&nbsp;
+
+### **Visualisation 1: Top 15 Movies for On-Screen Deaths**
+***
+
+This visualisation was produced to show the top 15 movies in this dataset in terms of on-screen deaths. This was to gain an intial impression as to which types of film have the highest number of on-screen deaths. 
+
+This visualisation is a reproduction of another visualisation by Randy Orten (referenced at the bottom of the page)
+
+```{R, Visualisation 1, fig.width = 12, fig.height = 6}
+
+#--------------HIGHEST BODY COUNT MOVIES----------------
+
+#Arrange in descending order and then select the top 10
+df_HBCM <- arrange(df_v3, desc(Body_Count))
+df_HBCM <- head(df_HBCM, 15)
+
+# Make a Bar Chart from this data frame
+      #Note reordered films by body count; displays graph in descending order
+top15_HBCM <- 
+  ggplot(df_HBCM, aes(x = reorder(Film, Body_Count), 
+                    y = Body_Count, 
+                    fill = Body_Count)) +
+  geom_bar(stat = "identity") +
+          scale_fill_gradient2(low= "white", 
+                             mid = "orange", 
+                             high = "red",
+                             midpoint = 600) +
+  labs( title = "The Top 15 Most Death-Filled Movies (1949-2013)",
+        subtitle = "The Most On-Screen Deaths Tallied",
+        x = "Film", 
+        y = "On-screen deaths",
+        fill = "Number of deaths"
+       ) +
+#Black Background  
+  theme(panel.background = element_rect(fill = "grey25"),
+        plot.background = element_rect(fill = "black"),
+        legend.background = element_rect(fill = "black"),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+#Text colour swap
+          plot.title = element_text(colour = "white", size = "20"),
+          plot.subtitle = element_text(colour = "red3", size = "12"),
+          legend.text = element_text(colour = "white"),
+          legend.title = element_text(colour = "white"),
+#White Axes
+           axis.line = element_line(colour = "white"),
+           axis.text = element_text(colour = "white", size = "12"),
+           axis.title = element_text(colour = "white", size = "16")) +
+#Flip x and y axes for easier reading
+  coord_flip()
+
+#Print and Save
+  print(top15_HBCM)
+
+  ggsave("top15deathsmovies.png", top15_HBCM, width = 12, height = 6, dpi = 300)
+```
+&nbsp;
+
+### **Data Preparation Part Two: Genre Analysis**
+***
+
+Prior to producing the second visualisation, further data preparation was required.
+
+A new data frame was produced where data that were tagged with multiple genres were duplicated to be analysed in the different genres.
+  
+Following this average on screen deaths were calculated per genre.
+  
+  
+```{r, Data Prep 2}
+#------------DATA PREP 2: HIGHEST BODYCOUNT GENRES------------------------------
+    #Split genres by row to duplicate films that have more than one genre
+        df_split <- separate_rows(df_v3, Genre, sep = "\\|")
+            df_HBCG <- arrange(df_split, desc(Genre))
+
+#----------Average On-Screen Deaths Per Genre----------
+avg_HBCG <- df_HBCG %>% 
+          group_by(Genre) %>%
+          summarize(avg_body = mean(Body_Count))
+```            
+   
+&nbsp;
+           
+### **Visualisation 2: Average Number of On-Screen Deaths by Genre**
+***
+
+The average number of on-screen deaths per genre were visualised to examine which genres depicted the most on-screen deaths.
+```{r, Visualisation 2, fig.width = 8, fig.height = 5}
+
+#1. Plot Average Body Count Per Genre
+
+ABCG_plot <- ggplot(avg_HBCG, aes(x = reorder(Genre, avg_body), 
+                                  y = avg_body, 
+                                  fill = "white")) +
+  geom_col(position = "stack") +
+  labs(title = "On-Screen Deaths By Film Genre",
+       subtitle = "Which Movies Depict The Most Death?",
+       x = "Genre", 
+       y = "Average On-Screen Deaths"
+  ) +
+  theme(panel.background = element_rect(fill = "grey25"),
+        plot.background = element_rect(fill = "black"),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor = element_blank(),
+#Text colour swap
+        plot.title = element_text(colour = "white", size = "20"),
+        plot.subtitle = element_text(colour = "white", family = "", size = "12"),
+#White Axes
+        axis.line = element_line(colour = "white"),
+        axis.text = element_text(colour = "red3", size = "12"),
+        axis.title = element_text(colour = "white", size = "16"), 
+#Remove Legend
+        legend.position = "none") +
+#Flip x&y
+        coord_flip()
+
+#Print and Save plot
+  print (ABCG_plot)
+    ggsave("DeadliestGenres.png", ABCG_plot, width = 8, height = 5, dpi = 300)
+
+    
+```    
+  
+  &nbsp;
+      
+### **Visualisation 3: MPA ratings as a proportion of each genre**
+***
+
+In this visualisation, proportional MPA rating are depicted per genre in a stacked bar graph.
+```{r, Visualisation 3, fig.width = 8, fig.height = 5}
+#2. Plot body count proportional to MPA rating by on screen deaths
+
+HBCG_plot <- 
+  ggplot(df_HBCG, aes(x = Genre, y = Body_Count, fill = MPAA_Rating)) +
+  geom_bar(stat = "identity", position = "fill") +
+  theme_gdocs() +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Proportion of MPA Movie Ratings by Genre",
+       subtitle = "How Do MPA Ratings Differ Between Genres That Depict On-Screen Deaths?",
+       x = "Genre", 
+       y = "Percentage of MPA Ratings",
+       fill = "MPA Rating"
+  ) +
+#Assign colours to MPA rating
+   scale_fill_manual(values = c("#53bd73",
+                               "#Fa6f00", 
+                               "#dbcd4f",
+                               "#db0909", 
+                               "#18f3fa", 
+                               "#C014c1"),
+                    labels = c("G",
+                               "PG",
+                               "PG-13",
+                               "R",
+                               "X",
+                               "Unrated")) +
+  
+#Aesthetics similar to previous graphs  
+  theme(panel.background = element_rect(fill = "grey25"),
+        plot.background = element_rect(fill = "black"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+#Text colour swap 
+        plot.title = element_text(colour = "white", size = "16"),
+        plot.subtitle = element_text(colour = "red", family = "", size = "12"),
+#White Axes
+        axis.line = element_line(colour = "white"),
+        axis.text = element_text(colour = "red", size = "10"),
+        axis.title = element_text(colour = "white", size = "14"),
+#Bottom Text Align
+        axis.text.x = element_text(angle = 50, hjust = 1))
+#Print and Save Plot
+    print (HBCG_plot)
+      ggsave("MPAAdistribution.png", HBCG_plot, width = 8, height = 5, dpi = 300)
+      
+```      
+      
+&nbsp;
+
+### **Visualisation 4: Average Number of On-Screen Deaths by Genre**
+***
+
+In the final visualisation, six genres were selected from the dataset. These were selected based on having an adequate sample size and if they are typically associated with depicting on-screen deaths.
+
+```{r, Visualisation 4: Exploratory, include = FALSE}
+#-----------------------------------IMDB/BODYCOUNT BY GENRE-----------------------
+#EXPLORATORY GRAPH
+      # To determine which genres have a reasonable sample size for scatter graph
+
+  ggplot(df_split, aes(x = reorder(Genre, table(Genre)[Genre]))) +
+      geom_bar() +
+        labs(title = "Exploratory graph of genre frequency in this dataset",
+             x = "Genre",
+             y = "Frequency") +
+        theme_fivethirtyeight() +
+        coord_flip()
+```
+
+```{r, Visualisation 4, Full, fig.width = 14, fig.height = 15}
+#----SCATTERPLOTS BY SINGLE GENRES-----
+      
+#ACTION ALONE
+action_plot <- ggplot(action_data, aes(x = IMDB_Rating, 
+                        y = Body_Count,
+                        colour = factor(MPAA_Rating))) +
+  geom_point(size = 2) +
+  labs(title = "Scatterplot of IMDB Rating by on-screen deaths in Action Films",
+       x = "IMDB Rating", 
+       y = "On-screen deaths",
+       colour = "US Age Rating") +
+  xlim(0,10)+
+  ylim(0, 850) +
+  geom_smooth(method = "lm",
+              color = "black", 
+              linetype = "dashed",
+              se = FALSE) +
+  theme_stata() +
+  scale_colour_manual(values = c("#53bd73",
+                                 "#Fa6f00", 
+                                 "#dbcd4f",
+                                 "#db0909", 
+                                 "#18f3fa", 
+                                 "#C014c1"),
+                      labels = c("G",
+                                 "PG",
+                                 "PG-13",
+                                 "R",
+                                 "X",
+                                 "Unrated"))
+
+#FANTASY ALONE
+fantasy_plot <- ggplot(fantasy_data, aes(x = IMDB_Rating, 
+                          y = Body_Count,
+                          colour = factor(MPAA_Rating))) +
+    geom_point(size = 2) +
+    labs(title = "Scatterplot of IMDB Rating by on-screen deaths in Fantasy Films",
+         x = "IMDB Rating", 
+         y = "On-screen deaths",
+         colour = "US Age Rating")+
+  xlim(0,10)+
+  ylim(0, 850) +
+    geom_smooth(method = "lm",
+                color = "black", 
+                linetype = "dashed",
+                se = FALSE) +
+    theme_stata() +
+  scale_colour_manual(values = c("#53bd73",
+                                 "#Fa6f00", 
+                                 "#dbcd4f",
+                                 "#db0909", 
+                                 "#18f3fa", 
+                                 "#C014c1"),
+                      labels = c("G",
+                                 "PG",
+                                 "PG-13",
+                                 "R",
+                                 "X",
+                                 "Unrated"))
+#HORROR ALONE
+horror_plot <-  ggplot(horror_data, aes(x = IMDB_Rating, 
+                        y = Body_Count,
+                        colour = factor(MPAA_Rating))) +
+  geom_point(size = 2) +
+    labs(title = "Scatterplot of IMDB Rating by on-screen deaths in Horror Films",
+         x = "IMDB Rating", 
+         y = "On-screen deaths",
+         colour = "US Age Rating") +
+  xlim(0,10)+
+  ylim(0, 850) +
+  geom_smooth(method = "lm",
+              color = "black", 
+              linetype = "dashed",
+              se = FALSE) +
+  theme_stata() +
+  scale_colour_manual(values = c("#53bd73",
+                                 "#Fa6f00", 
+                                 "#dbcd4f",
+                                 "#db0909", 
+                                 "#18f3fa", 
+                                 "#C014c1"),
+                      labels = c("G",
+                                 "PG",
+                                 "PG-13",
+                                 "R",
+                                 "X",
+                                 "Unrated"))
+  
+#THRILLER ALONE
+thriller_plot <- ggplot(thriller_data, aes(x = IMDB_Rating, 
+                          y = Body_Count,
+                          colour = factor(MPAA_Rating))) +
+    geom_point(size = 2) +
+    labs(title = "Scatterplot of IMDB Rating by on-screen deaths in Thriller Films",
+         x = "IMDB Rating", 
+         y = "On-screen deaths",
+         colour = "US Age Rating") +
+  xlim(0,10)+
+  ylim(0, 850) +
+    geom_smooth(method = "lm",
+                color = "black", 
+                linetype = "dashed",
+                se = FALSE) +
+    theme_stata() +
+  scale_colour_manual(values = c("#53bd73",
+                                 "#Fa6f00", 
+                                 "#dbcd4f",
+                                 "#db0909", 
+                                 "#18f3fa", 
+                                 "#C014c1"),
+                      labels = c("G",
+                                 "PG",
+                                 "PG-13",
+                                 "R",
+                                 "X",
+                                 "Unrated"))
+
+#SCI-FI ALONE
+scifi_plot <- ggplot(scifi_data, aes(x = IMDB_Rating, 
+                         y = Body_Count,
+                         colour = factor(MPAA_Rating))) +
+    geom_point(size = 2) +
+    labs(title = "Scatterplot of IMDB Rating by on-screen deaths in Sci-Fi Films",
+         x = "IMDB Rating", 
+         y = "On-screen deaths",
+         colour = "US Age Rating") +
+  xlim(0,10)+
+  ylim(0, 850) +
+    geom_smooth(method = "lm",
+                color = "black", 
+                linetype = "dashed",
+                se = FALSE) +
+    theme_stata() +
+  scale_colour_manual(values = c("#53bd73",
+                                 "#Fa6f00", 
+                                 "#dbcd4f",
+                                 "#db0909", 
+                                 "#18f3fa", 
+                                 "#C014c1"),
+                      labels = c("G",
+                                 "PG",
+                                 "PG-13",
+                                 "R",
+                                 "X",
+                                 "Unrated"))
+ 
+#WAR ALONE
+war_plot <- ggplot(war_data, aes(x = IMDB_Rating, 
+                         y = Body_Count,
+                         colour = factor(MPAA_Rating))) +
+    geom_point(size = 2) +
+    labs(title = "Scatterplot of IMDB Rating by on-screen deaths in War Films",
+         x = "IMDB Rating", 
+         y = "On-screen deaths",
+         colour = "US Age Rating") +
+  xlim(0,10)+
+  ylim(0, 850) +
+    geom_smooth(method = "lm",
+                color = "black", 
+                linetype = "dashed",
+                se = FALSE) +
+  theme_stata() +
+  scale_colour_manual(values = c("#53bd73",
+                                 "#Fa6f00", 
+                                 "#dbcd4f",
+                                 "#db0909", 
+                                 "#18f3fa", 
+                                 "#C014c1"),
+                      labels = c("G",
+                                 "PG",
+                                 "PG-13",
+                                 "R",
+                                 "X",
+                                 "Unrated"))
+  
+# -------------------COMBINE WITHIN-GENRE VISUALISATIONS----------
+
+combined_graph <- grid.arrange(action_plot, 
+                               fantasy_plot, 
+                               horror_plot, 
+                               thriller_plot, 
+                               scifi_plot,
+                               war_plot,
+                               ncol = 2)
+
+#Print and save plot    
+  ggsave("CombinedGenres.png", combined_graph, width = 14, height = 15, dpi = 300)
+```
+
+
+&nbsp;
+
+### **Summary** 
+***
+
+In summary, this dataset aimed to examine the correlations between on-screen death counts and common film metrics, such as genre and reviewer score. Previous projects involving this data had not examined the relationship between on-screen deaths and genre. This was the main goal of this visualisation project.
+
+Four visualisations were produced in the lead up to this goal:
+
++ Visualisation 1. This depicted the top 15 films from this data set in terms of body count.
+
++ Visualisation 2. depicted which genres depict the most on-screen deaths, on average.
+
++ Visualisation 3. Depicted age ratings distribution within genres that depict on-screen deaths.
+
++ Visualisation 4. Visualised the relationship between on-screen deaths and IMDB ratings within genres.
+
+Due to several visualisations showing little-to-no relationship between genre and on-screen deaths, further visualisations could be made using a more up-to-date alternative data set or the full 22 genres could be visualised comparably to one another.
+Furthermore, future analyses could examine the associations between director and on-screen deaths, or even by country of production.  
+
+&nbsp;
+
+### **Discussion**
+***
+
+Caveat #1: The purpose of this project was to demonstrate an ability to visualise a given dataset using RStudio effectively as part of a Data Analysis and Visualisation Course at the University of Sheffield, rather than to provide any novel or groundbreaking data findings. No statistical tests were performed, therefore, any relationship(s) within the data set have not been truly evaluated to a full extent.
+
+Caveat #2: The data set utilised in this study were collected several third-parties and made freely available via figshare. This dataset may be subject to several confounds such as inter-rater biases when determining body count, incorrect information retrieved from IMDB or simple human error during data collation. In particular, due to the collaborative nature of the MovieBodyCount forum, several data entries may have had inconsistent countings that were not revised when guidelines were altered or if guidelines were not strictly followed.
+
+Caveat #3: MPAA ratings were simplified for ease of analysis. Due to rating systems in the United States having changed over the years several films may be inaccurately rated by today's standards or have been grouped into an incorrect category whilst tidying the data. Furthermore, it must be highlighted that two films with the same genre are not equivalent to one another in content. (Eg. One PG rated film may be significantly closer to a G rating than another) and therefore may limit the visualizations made.
+
+Caveat #4: Despite average on-screen deaths per minute being calculated, it may be that the time of on-screen deaths into a film had an effect on IMDB scores. Would it be more entertaining to consistently show character deaths throughout a slasher film or for every character to die in the last few minutes?
+
+&nbsp;
+
+### **Other interesting analyses based on this data**
+***
+
+##### A visualisation of the top 25 deadliest movies by on-screen deaths:
+##### http://www.randalolson.com/2013/12/31/deadliest-films-of-all-time-by-on-screen-death-counts/
+
+&nbsp;
+
+##### A visualisation of the top 25 deadliest movies by on-screen deaths per minute:
+##### http://www.randalolson.com/2013/12/31/most-violence-packed-films/
+
+&nbsp;
+
+##### A visualisation showing the trend of on-screen deaths increasing by release year:
+##### http://www.randalolson.com/2013/12/31/violence-has-been-on-the-rise-in-the-film-industry/
